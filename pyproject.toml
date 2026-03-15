@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dynamic-config-nacos"
+version = "0.1.0"
+description = "Reusable dynamic config provider with YAML fallback and Nacos backends"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "FrankTang", email = "franktz2003@gmail.com" }]
+maintainers = [{ name = "FrankTang", email = "franktz2003@gmail.com" }]
+keywords = ["configuration", "yaml", "nacos", "dynamic-config-nacos"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: System :: Distributed Computing",
+]
+dependencies = [
+  "PyYAML>=6.0",
+  "requests>=2.31",
+  "nacos-sdk-python>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.4",
+]
+release = [
+  "build>=1.2",
+  "twine>=5.1",
+]
+
+[project.urls]
+PyPI = "https://pypi.org/project/dynamic-config-nacos/"
+Homepage = "https://github.com/franktz/dynamic-config-nacos"
+Documentation = "https://github.com/franktz/dynamic-config-nacos"
+Repository = "https://github.com/franktz/dynamic-config-nacos"
+Issues = "https://github.com/franktz/dynamic-config-nacos/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
