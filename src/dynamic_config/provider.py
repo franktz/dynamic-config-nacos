@@ -117,12 +117,16 @@ class DynamicConfigProvider:
             if data is None:
                 return
             self._apply_raw(data)
+            active_backend = self._active_backend_name()
             logger.info(
-                "applied nacos config update",
+                "applied nacos config update via %s for data_id=%s group=%s",
+                active_backend,
+                self._nacos_settings.data_id if self._nacos_settings else None,
+                self._nacos_settings.group if self._nacos_settings else None,
                 extra={
                     "data_id": self._nacos_settings.data_id if self._nacos_settings else None,
                     "group": self._nacos_settings.group if self._nacos_settings else None,
-                    "backend": self._nacos_settings.backend.value if self._nacos_settings else None,
+                    "backend": active_backend,
                 },
             )
 
@@ -134,6 +138,18 @@ class DynamicConfigProvider:
     def _apply_raw(self, raw: dict[str, Any]) -> None:
         self._raw = raw
         self._conf = Conf(raw)
+
+    def _active_backend_name(self) -> str:
+        if self._nacos_backend is None:
+            return "unknown"
+        backend_type = getattr(self._nacos_backend, "backend_type", None)
+        if isinstance(backend_type, NacosBackendType):
+            return backend_type.value
+        if isinstance(backend_type, str) and backend_type:
+            return backend_type
+        if self._nacos_settings is not None:
+            return self._nacos_settings.backend.value
+        return "unknown"
 
     def _parse_yaml_mapping(self, content: str) -> dict[str, Any] | None:
         data = yaml.safe_load(content) or {}

@@ -134,9 +134,18 @@ Common log events in the current implementation:
 - `warning`: local YAML file is missing
 - `warning`: Nacos returns a YAML root that is not a mapping
 - `warning`: invalid backend value or polling interval
+- `info`: watcher startup, including backend details and the polling interval in HTTP mode
 - `info`: a Nacos update has been applied
 - `info`: a backend was auto-selected
 - `exception`: Nacos fetch, watcher startup, HTTP login, or version detection failed
+
+## SDK Compatibility
+
+For current `nacos-sdk-python` 3.x environments:
+
+- `sdk_v3` is the supported SDK-backed mode
+- `auto` will prefer `sdk_v3` when only the 3.x SDK import path is available
+- `sdk_v2` is only for environments that still ship the legacy `nacos` package
 
 ## How to Read Configuration
 
@@ -195,11 +204,19 @@ The typical loading sequence is:
 ### Auto Backend Selection
 
 When `NacosBackendType.AUTO` is used, the library first calls the Nacos server
-state endpoint to detect the major version and then picks a preferred order:
+state endpoint over HTTP to detect the major version and then picks a preferred
+order:
 
 - server 2.x: prefer `sdk_v2`
 - server 3.x: prefer `sdk_v3`
 - detection failed: try `sdk_v3` first
+
+Before trying that order, the library also checks which SDK import paths are
+actually available in the current Python environment:
+
+- if only `v2.nacos` exists, `auto` skips `sdk_v2`
+- if only `nacos` exists, `auto` skips `sdk_v3`
+- if no SDK path exists, `auto` falls back to `http`
 
 If one backend fails to initialize, the next candidate is tried.
 
@@ -210,8 +227,10 @@ The HTTP backend:
 - fetches content from `/nacos/v1/cs/configs`
 - optionally logs in first to obtain `accessToken`
 - starts a background daemon polling thread
+- logs watcher startup with the active backend and polling interval
 - compares content MD5 values to detect updates
 - triggers the update callback only when content changes
+- logs when updated content has been applied in memory
 
 ### How the SDK Backend Stays Compatible
 

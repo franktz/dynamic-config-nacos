@@ -96,6 +96,16 @@ logger = logging.getLogger(__name__)
 因此是否输出日志、输出到哪里、显示哪些级别，都是由宿主应用的 logging 配置
 统一控制的。
 
+当前常见日志包括：
+
+- `warning`：本地 YAML 文件缺失
+- `warning`：Nacos 返回的 YAML 根节点不是映射
+- `warning`：backend 值或轮询间隔非法
+- `info`：watcher 已启动，HTTP 模式会带上轮询间隔
+- `info`：Nacos 配置更新已经应用到内存
+- `info`：自动选择了某个 backend
+- `exception`：Nacos 拉取、watcher 启动、登录或版本探测失败
+
 ## 内部实现概览
 
 整体流程大致如下：
@@ -113,11 +123,23 @@ logger = logging.getLogger(__name__)
 - Nacos 3.x：`sdk_v3` -> `sdk_v2` -> `http`
 - 无法探测时：`sdk_v3` -> `sdk_v2` -> `http`
 
+这里的“探测”是先通过 HTTP 请求 Nacos 的服务端状态接口拿主版本，再决定优先顺
+序。随后库还会再判断当前 Python 环境里到底有哪些 SDK 导入路径可用：
+
+- 如果只有 `v2.nacos`，会跳过 `sdk_v2`
+- 如果只有 `nacos`，会跳过 `sdk_v3`
+- 如果两个 SDK 路径都不可用，就直接回退到 `http`
+
+HTTP backend 的 watch 不是一次性读取，而是会启动后台轮询线程，按配置的轮询间
+隔持续拉取，并通过内容 MD5 判断是否发生变更。只有内容真的变化时，才会刷新内
+存配置并输出更新日志。
+
 ## 相关文档
 
 - 英文说明：[README.md](./README.md)
 - 详细英文使用指南：[how-to-use.md](./how-to-use.md)
 - 详细中文使用指南：[how-to-use.zh-CN.md](./how-to-use.zh-CN.md)
+- 变更日志：[CHANGELOG.md](./CHANGELOG.md)
 - 发布说明：[PUBLISHING.md](./PUBLISHING.md)
 
 ## 项目链接

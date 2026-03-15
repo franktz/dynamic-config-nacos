@@ -1,3 +1,7 @@
 include README.md
+include README.zh-CN.md
+include how-to-use.md
+include how-to-use.zh-CN.md
+include CHANGELOG.md
 include PUBLISHING.md
 recursive-include src *.py

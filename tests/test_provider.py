@@ -6,6 +6,8 @@ from dynamic_config import DynamicConfigProvider, NacosBackendType, NacosSetting
 
 
 class _StubBackend:
+    backend_type = NacosBackendType.SDK_V3
+
     def __init__(self, initial_content: str | None, update_content: str | None = None):
         self.initial_content = initial_content
         self.update_content = update_content
@@ -43,7 +45,7 @@ def test_dynamic_config_provider_loads_explicit_http_backend_from_env(monkeypatc
     assert provider.nacos_settings.polling_interval_seconds == 5.0
 
 
-def test_dynamic_config_provider_applies_backend_updates(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_dynamic_config_provider_applies_backend_updates(tmp_path: Path, monkeypatch, caplog) -> None:  # type: ignore[no-untyped-def]
     from dynamic_config import provider as provider_module
 
     config_path = tmp_path / "local.yaml"
@@ -56,6 +58,7 @@ def test_dynamic_config_provider_applies_backend_updates(tmp_path: Path, monkeyp
     monkeypatch.setattr(provider_module, "create_nacos_backend", lambda _settings: backend)
 
     provider = DynamicConfigProvider(local_yaml_path=str(config_path))
+    caplog.set_level("INFO")
     provider.load_initial(
         NacosSettings(
             server_addr="127.0.0.1:8848",
@@ -68,3 +71,4 @@ def test_dynamic_config_provider_applies_backend_updates(tmp_path: Path, monkeyp
 
     assert backend.started is True
     assert provider.get("prompts.summary_prefix") == "[Updated]"
+    assert "applied nacos config update via sdk_v3" in caplog.text

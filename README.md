@@ -124,9 +124,19 @@ Typical log events include:
 - `warning` when the local YAML file is missing
 - `warning` when Nacos returns a non-mapping YAML root
 - `warning` for invalid backend or polling interval values
+- `info` when a watcher has started, including the backend and polling interval for HTTP mode
 - `info` when a Nacos update has been applied
 - `info` when a backend is auto-selected
 - `exception` when Nacos fetch, watcher startup, login, or version detection fails
+
+## SDK Compatibility Note
+
+If you install the current `nacos-sdk-python` 3.x line, the supported SDK path
+in this package is `sdk_v3`.
+
+In `auto` mode, the package now prefers `sdk_v3` when that is the only
+installed SDK-backed import path available. `sdk_v2` is retained for older
+environments that still provide the legacy `nacos` package import.
 
 ## Does the Local YAML File Need to Exist?
 
@@ -158,18 +168,24 @@ The library's loading flow looks like this:
 ### Auto Backend Selection
 
 When `backend=AUTO`, the package first tries to detect the Nacos server major
-version and then picks a preferred order:
+version over HTTP and then picks a preferred order:
 
 - Nacos 2.x: `sdk_v2` -> `sdk_v3` -> `http`
 - Nacos 3.x: `sdk_v3` -> `sdk_v2` -> `http`
 - Detection failed: `sdk_v3` -> `sdk_v2` -> `http`
+
+After building that preferred order, the package filters out SDK paths that are
+not actually importable in the current Python environment. For example, if only
+`v2.nacos` is installed, `auto` skips `sdk_v2` and goes straight to `sdk_v3`.
 
 ### HTTP Mode
 
 - Fetches config through the Nacos HTTP API
 - Optionally logs in first to obtain an `accessToken`
 - Starts a background polling thread
+- Logs watcher startup with the active backend and polling interval
 - Uses content MD5 to detect changes
+- Logs when an updated config has been applied
 
 ### SDK Mode
 
@@ -191,6 +207,7 @@ version and then picks a preferred order:
 - English usage guide: [how-to-use.md](./how-to-use.md)
 - Chinese usage guide: [how-to-use.zh-CN.md](./how-to-use.zh-CN.md)
 - Chinese overview: [README.zh-CN.md](./README.zh-CN.md)
+- Changelog: [CHANGELOG.md](./CHANGELOG.md)
 
 ## Project Links
 

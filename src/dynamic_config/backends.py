@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import importlib
+import importlib.util
 import logging
 import threading
 import time
@@ -36,6 +38,8 @@ class NacosConfigBackend(ABC):
 
 
 class HttpNacosBackend(NacosConfigBackend):
+    backend_type = NacosBackendType.HTTP
+
     def __init__(self, settings: NacosSettings):
         super().__init__(settings)
         self._watch_started = False
@@ -86,6 +90,18 @@ class HttpNacosBackend(NacosConfigBackend):
             name=f"nacos-http-watch-{self.settings.data_id}",
             daemon=True,
         ).start()
+        logger.info(
+            "started nacos watcher via http backend for data_id=%s group=%s interval=%.3fs",
+            self.settings.data_id,
+            self.settings.group,
+            self.settings.polling_interval_seconds,
+            extra={
+                "backend": self.backend_type.value,
+                "data_id": self.settings.data_id,
+                "group": self.settings.group,
+                "polling_interval_seconds": self.settings.polling_interval_seconds,
+            },
+        )
 
     def mark_content(self, content: str) -> None:
         self._last_content_md5 = self._content_md5(content)
@@ -149,10 +165,11 @@ class HttpNacosBackend(NacosConfigBackend):
         return hashlib.md5(content.encode("utf-8")).hexdigest()
 
 
-class SdkNacosBackend(NacosConfigBackend):
+class LegacySdkNacosBackend(NacosConfigBackend):
     def __init__(self, settings: NacosSettings, *, sdk_version: NacosBackendType):
         super().__init__(settings)
         self._sdk_version = sdk_version
+        self.backend_type = sdk_version
         self._client = self._build_client()
         self._watch_started = False
 
@@ -170,17 +187,22 @@ class SdkNacosBackend(NacosConfigBackend):
     def start_watch(self, on_update: UpdateCallback) -> None:
         if self._watch_started:
             return
-        self._watch_started = True
         self._register_listener(on_update)
+        self._watch_started = True
+        logger.info(
+            "started nacos watcher via %s backend for data_id=%s group=%s",
+            self.backend_type.value,
+            self.settings.data_id,
+            self.settings.group,
+            extra={
+                "backend": self.backend_type.value,
+                "data_id": self.settings.data_id,
+                "group": self.settings.group,
+            },
+        )
 
     def _build_client(self) -> object:
-        client_specs = {
-            NacosBackendType.SDK_V2: (("nacos", "NacosClient"),),
-            NacosBackendType.SDK_V3: (
-                ("v2.nacos.nacos_client", "NacosClient"),
-                ("v2.nacos", "NacosClient"),
-            ),
-        }[self._sdk_version]
+        client_specs = ((("nacos", "NacosClient"),),)[0]
         last_error: Exception | None = None
         for module_name, class_name in client_specs:
             try:
@@ -242,25 +264,130 @@ class SdkNacosBackend(NacosConfigBackend):
         )
 
 
+class AsyncSdkV3NacosBackend(NacosConfigBackend):
+    backend_type = NacosBackendType.SDK_V3
+
+    def __init__(self, settings: NacosSettings):
+        super().__init__(settings)
+        self._watch_started = False
+        self._module = self._import_sdk_module()
+
+    def fetch_content(self) -> str | None:
+        try:
+            return asyncio.run(self._fetch_content_async())
+        except Exception as exc:
+            raise NacosBackendError("failed to load config from nacos via sdk_v3") from exc
+
+    def start_watch(self, on_update: UpdateCallback) -> None:
+        if self._watch_started:
+            return
+        self._watch_started = True
+
+        ready = threading.Event()
+        error_holder: list[Exception] = []
+
+        def _runner() -> None:
+            try:
+                asyncio.run(self._watch_async(on_update, ready))
+            except Exception as exc:  # pragma: no cover - thread safety path
+                error_holder.append(exc)
+                ready.set()
+
+        threading.Thread(
+            target=_runner,
+            name=f"nacos-sdk-v3-watch-{self.settings.data_id}",
+            daemon=True,
+        ).start()
+
+        ready.wait(timeout=10)
+        if error_holder:
+            raise NacosBackendError("failed to start nacos watcher via sdk_v3") from error_holder[0]
+        logger.info(
+            "started nacos watcher via sdk_v3 backend for data_id=%s group=%s",
+            self.settings.data_id,
+            self.settings.group,
+            extra={
+                "backend": self.backend_type.value,
+                "data_id": self.settings.data_id,
+                "group": self.settings.group,
+            },
+        )
+
+    def _import_sdk_module(self) -> object:
+        try:
+            return importlib.import_module("v2.nacos")
+        except Exception as exc:
+            raise NacosBackendError("sdk_v3 client is not available") from exc
+
+    async def _fetch_content_async(self) -> str | None:
+        service = await self._create_config_service()
+        try:
+            content = await service.get_config(self._config_param())
+        finally:
+            await service.shutdown()
+        return content if isinstance(content, str) and content.strip() else None
+
+    async def _watch_async(self, on_update: UpdateCallback, ready: threading.Event) -> None:
+        service = await self._create_config_service()
+
+        async def _listener(*args: object, **kwargs: object) -> None:
+            content = kwargs.get("content")
+            if content is None and args:
+                content = args[-1]
+            if isinstance(content, bytes):
+                content = content.decode("utf-8")
+            if isinstance(content, str):
+                on_update(content)
+
+        await service.add_listener(self.settings.data_id, self.settings.group, _listener)
+        ready.set()
+
+        # Keep the listener alive for the lifetime of the process, matching the
+        # best-effort daemon-thread behavior used by the HTTP backend.
+        await asyncio.Event().wait()
+
+    async def _create_config_service(self) -> object:
+        builder = self._module.ClientConfigBuilder()
+        builder.server_address(self.settings.server_addr)
+        if self.settings.namespace:
+            builder.namespace_id(self.settings.namespace)
+        if self.settings.username:
+            builder.username(self.settings.username)
+        if self.settings.password:
+            builder.password(self.settings.password)
+        client_config = builder.build()
+        return await self._module.NacosConfigService.create_config_service(client_config)
+
+    def _config_param(self) -> object:
+        return self._module.ConfigParam(
+            data_id=self.settings.data_id,
+            group=self.settings.group,
+        )
+
+
 def create_nacos_backend(settings: NacosSettings) -> NacosConfigBackend:
     if settings.backend == NacosBackendType.HTTP:
         return HttpNacosBackend(settings)
     if settings.backend == NacosBackendType.SDK_V2:
-        return SdkNacosBackend(settings, sdk_version=NacosBackendType.SDK_V2)
+        return LegacySdkNacosBackend(settings, sdk_version=NacosBackendType.SDK_V2)
     if settings.backend == NacosBackendType.SDK_V3:
-        return SdkNacosBackend(settings, sdk_version=NacosBackendType.SDK_V3)
+        return AsyncSdkV3NacosBackend(settings)
 
     server_major = detect_nacos_server_major_version(settings)
-    preferred_backends = _preferred_auto_backends(server_major)
+    preferred_backends = _preferred_auto_backends(server_major, available_backends=_available_sdk_backends())
 
     for backend_type in preferred_backends:
         try:
             if backend_type == NacosBackendType.HTTP:
                 backend = HttpNacosBackend(settings)
+            elif backend_type == NacosBackendType.SDK_V3:
+                backend = AsyncSdkV3NacosBackend(settings)
             else:
-                backend = SdkNacosBackend(settings, sdk_version=backend_type)
+                backend = LegacySdkNacosBackend(settings, sdk_version=backend_type)
             logger.info(
-                "selected nacos backend",
+                "selected nacos backend=%s for data_id=%s",
+                backend_type.value,
+                settings.data_id,
                 extra={"backend": backend_type.value, "data_id": settings.data_id},
             )
             return backend
@@ -294,9 +421,27 @@ def detect_nacos_server_major_version(settings: NacosSettings) -> int | None:
         return None
 
 
-def _preferred_auto_backends(server_major: int | None) -> tuple[NacosBackendType, ...]:
+def _available_sdk_backends() -> tuple[NacosBackendType, ...]:
+    available: list[NacosBackendType] = []
+    if importlib.util.find_spec("v2.nacos") is not None:
+        available.append(NacosBackendType.SDK_V3)
+    if importlib.util.find_spec("nacos") is not None:
+        available.append(NacosBackendType.SDK_V2)
+    return tuple(available)
+
+
+def _preferred_auto_backends(
+    server_major: int | None,
+    *,
+    available_backends: tuple[NacosBackendType, ...] | None = None,
+) -> tuple[NacosBackendType, ...]:
+    if available_backends is None:
+        available_backends = (NacosBackendType.SDK_V2, NacosBackendType.SDK_V3)
     if server_major == 2:
-        return (NacosBackendType.SDK_V2, NacosBackendType.SDK_V3, NacosBackendType.HTTP)
-    if server_major == 3:
-        return (NacosBackendType.SDK_V3, NacosBackendType.SDK_V2, NacosBackendType.HTTP)
-    return (NacosBackendType.SDK_V3, NacosBackendType.SDK_V2, NacosBackendType.HTTP)
+        preferred = (NacosBackendType.SDK_V2, NacosBackendType.SDK_V3)
+    elif server_major == 3:
+        preferred = (NacosBackendType.SDK_V3, NacosBackendType.SDK_V2)
+    else:
+        preferred = (NacosBackendType.SDK_V3, NacosBackendType.SDK_V2)
+    filtered = tuple(backend for backend in preferred if backend in available_backends)
+    return (*filtered, NacosBackendType.HTTP)

@@ -5,3 +5,5 @@ dist/
 src/*.egg-info/
 __pycache__/
 *.py[cod]
+*.code-workspace
+.env

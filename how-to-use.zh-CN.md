@@ -129,6 +129,7 @@ logging.basicConfig(level=logging.INFO)
 - `warning`：本地 YAML 文件缺失
 - `warning`：Nacos 返回的 YAML 根节点不是映射
 - `warning`：非法 backend 值或轮询间隔
+- `info`：watcher 启动成功，HTTP 模式会带上轮询间隔
 - `info`：Nacos 更新已应用
 - `info`：自动选择了某个 backend
 - `exception`：Nacos 拉取、watcher 启动、HTTP 登录或版本探测失败
@@ -195,6 +196,13 @@ conf["servers[0].host"]
 - 服务端 3.x：优先 `sdk_v3`
 - 探测失败：先尝试 `sdk_v3`
 
+在正式尝试前，库还会先判断当前 Python 环境里到底有哪些 SDK 导入路径真的可
+用：
+
+- 如果只有 `v2.nacos`，就跳过 `sdk_v2`
+- 如果只有旧的 `nacos` 包，就跳过 `sdk_v3`
+- 如果两个 SDK 路径都不存在，就直接回退到 `http`
+
 如果某个 backend 初始化失败，就继续尝试下一个。
 
 ### HTTP backend 的工作方式
@@ -204,8 +212,10 @@ HTTP backend 会：
 - 从 `/nacos/v1/cs/configs` 拉取内容
 - 如有需要先登录获取 `accessToken`
 - 启动后台守护轮询线程
+- 在 watcher 启动时记录 backend 和轮询间隔
 - 用内容 MD5 判断是否发生更新
 - 仅在内容变化时触发更新回调
+- 在新配置应用到内存后输出更新日志
 
 ### SDK backend 的兼容策略
 
