@@ -69,6 +69,37 @@ For a first release, the easiest path is usually:
 2. Verify that the package metadata and install experience look correct
 3. Set up Trusted Publisher later if you want automated releases
 
+This repository is now prepared for that flow with:
+
+- workflow file: `.github/workflows/publish.yml`
+- GitHub environment name: `pypi`
+- PyPI project URL: <https://pypi.org/project/dynamic-config-nacos/>
+
+## Trusted Publisher Setup For This Repository
+
+To enable GitHub Actions Trusted Publishing on PyPI, add a GitHub publisher for
+the existing PyPI project with these exact values:
+
+- PyPI project: `dynamic-config-nacos`
+- Repository owner: `franktz`
+- Repository name: `dynamic-config-nacos`
+- Workflow filename: `publish.yml`
+- GitHub environment name: `pypi`
+
+After that, the workflow in `.github/workflows/publish.yml` can publish to PyPI
+without storing a `PYPI_TOKEN` secret in GitHub.
+
+Recommended GitHub-side setup:
+
+1. Create a repository environment named `pypi`
+2. Optionally require manual approval for that environment
+3. Create GitHub Releases when you want to publish automatically
+
+The workflow currently supports two triggers:
+
+- manual run via `workflow_dispatch`
+- automatic publish when a GitHub Release is marked as published
+
 ## Files Already Updated
 
 - `pyproject.toml`
