@@ -6,6 +6,24 @@ Author: FrankTang (<franktz2003@gmail.com>)
 
 License: MIT
 
+## [0.1.2] - 2026-03-19
+
+### Added
+
+- Added `sdk_log_path` and `sdk_log_level` to `NacosSettings` so callers can
+  route `nacos-python-sdk` logs to a dedicated directory or explicit log file.
+- Added `NACOS_SDK_LOG_PATH` and `NACOS_SDK_LOG_LEVEL` environment-variable
+  support in `load_from_env()`.
+
+### Improved
+
+- Kept SDK log routing isolated from the application's root `logging`
+  configuration for `sdk_v2` and `sdk_v3` backends.
+- Supported explicit file targets such as `logs/nacos.log` in addition to log
+  directories for SDK-backed Nacos clients.
+- Documented the separate SDK logging setup in the English and Simplified
+  Chinese README and usage guide.
+
 ## [0.1.1] - 2026-03-15
 
 ### Fixed

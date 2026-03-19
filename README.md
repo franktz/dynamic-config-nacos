@@ -129,6 +129,39 @@ Typical log events include:
 - `info` when a backend is auto-selected
 - `exception` when Nacos fetch, watcher startup, login, or version detection fails
 
+### Separate `nacos-python-sdk` Logs
+
+If you use `sdk_v2` or `sdk_v3`, you can route SDK logs to a dedicated path
+without changing your application's root logger setup:
+
+```python
+from dynamic_config import DynamicConfigProvider, NacosBackendType, NacosSettings
+
+provider = DynamicConfigProvider(local_yaml_path="configs/local.yaml")
+provider.load_initial(
+    NacosSettings(
+        server_addr="127.0.0.1:8848",
+        namespace=None,
+        data_id="app.yaml",
+        group="DEFAULT_GROUP",
+        backend=NacosBackendType.SDK_V3,
+        sdk_log_level="ERROR",
+        sdk_log_path="logs/nacos.log",
+    )
+)
+```
+
+You can also configure the same behavior through environment variables:
+
+```powershell
+$env:NACOS_SDK_LOG_LEVEL = "ERROR"
+$env:NACOS_SDK_LOG_PATH = "logs/nacos.log"
+```
+
+`sdk_log_path` accepts either a directory or an explicit log file path. When
+you pass a file path such as `logs/nacos.log`, the SDK logs are written to that
+exact file.
+
 ## SDK Compatibility Note
 
 If you install the current `nacos-sdk-python` 3.x line, the supported SDK path

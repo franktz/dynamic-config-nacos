@@ -36,6 +36,8 @@ class DynamicConfigProvider:
         password_env: str = "NACOS_PASSWORD",
         backend_env: str = "NACOS_BACKEND",
         polling_interval_env: str = "NACOS_POLLING_INTERVAL_SECONDS",
+        sdk_log_path_env: str = "NACOS_SDK_LOG_PATH",
+        sdk_log_level_env: str = "NACOS_SDK_LOG_LEVEL",
         default_data_id: str = "app.yaml",
         default_group: str = "DEFAULT_GROUP",
     ) -> None:
@@ -54,6 +56,8 @@ class DynamicConfigProvider:
                 password=os.getenv(password_env),
                 backend=self._parse_backend(os.getenv(backend_env)),
                 polling_interval_seconds=self._parse_polling_interval(os.getenv(polling_interval_env)),
+                sdk_log_path=os.getenv(sdk_log_path_env),
+                sdk_log_level=self._parse_log_level(os.getenv(sdk_log_level_env)),
             )
         self.load_initial(nacos)
 
@@ -181,3 +185,18 @@ class DynamicConfigProvider:
             logger.warning("invalid nacos polling interval %s, fallback to 2.0", value)
             return 2.0
         return parsed if parsed > 0 else 2.0
+
+    @staticmethod
+    def _parse_log_level(value: str | None) -> int | None:
+        if not value:
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        if text.lstrip("+-").isdigit():
+            return int(text)
+        resolved = getattr(logging, text.upper(), None)
+        if isinstance(resolved, int):
+            return resolved
+        logger.warning("invalid nacos sdk log level %s, fallback to SDK default", value)
+        return None

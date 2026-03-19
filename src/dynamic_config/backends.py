@@ -9,6 +9,8 @@ import threading
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
@@ -35,6 +37,100 @@ class NacosConfigBackend(ABC):
     @abstractmethod
     def start_watch(self, on_update: UpdateCallback) -> None:
         raise NotImplementedError
+
+
+def _resolve_sdk_log_level(value: int | str | None) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.lstrip("+-").isdigit():
+        return int(text)
+    resolved = getattr(logging, text.upper(), None)
+    return resolved if isinstance(resolved, int) else None
+
+
+def _sdk_log_target(settings: NacosSettings) -> Path | None:
+    if not settings.sdk_log_path:
+        return None
+    return Path(settings.sdk_log_path).expanduser()
+
+
+def _sdk_log_uses_explicit_file(log_target: Path | None) -> bool:
+    return log_target is not None and bool(log_target.suffix)
+
+
+def _sdk_log_dir(log_target: Path | None) -> Path | None:
+    if log_target is None:
+        return None
+    return log_target.parent if _sdk_log_uses_explicit_file(log_target) else log_target
+
+
+def _clear_logger_handlers(sdk_logger: logging.Logger) -> None:
+    for handler in list(sdk_logger.handlers):
+        sdk_logger.removeHandler(handler)
+        handler.close()
+
+
+def _install_sdk_file_handler(
+    logger_name: str,
+    *,
+    log_file: Path,
+    log_level: int,
+    formatter: logging.Formatter,
+) -> None:
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    sdk_logger = logging.getLogger(logger_name)
+    _clear_logger_handlers(sdk_logger)
+    handler = TimedRotatingFileHandler(
+        str(log_file),
+        when="midnight",
+        interval=1,
+        backupCount=7,
+        encoding="utf-8",
+    )
+    handler.setFormatter(formatter)
+    sdk_logger.addHandler(handler)
+    sdk_logger.setLevel(log_level)
+    sdk_logger.propagate = False
+
+
+def _configure_legacy_sdk_log_file(settings: NacosSettings) -> None:
+    log_target = _sdk_log_target(settings)
+    if not _sdk_log_uses_explicit_file(log_target):
+        return
+    log_level = _resolve_sdk_log_level(settings.sdk_log_level) or logging.INFO
+    _install_sdk_file_handler(
+        "nacos",
+        log_file=log_target,
+        log_level=log_level,
+        formatter=logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"),
+    )
+    client_logger = logging.getLogger("nacos.client")
+    _clear_logger_handlers(client_logger)
+    client_logger.setLevel(logging.NOTSET)
+    client_logger.propagate = True
+
+
+def _configure_v3_sdk_log_file(settings: NacosSettings, logger_name: str) -> Path | None:
+    log_target = _sdk_log_target(settings)
+    if not _sdk_log_uses_explicit_file(log_target):
+        return None
+    log_level = _resolve_sdk_log_level(settings.sdk_log_level) or logging.INFO
+    _install_sdk_file_handler(
+        logger_name,
+        log_file=log_target,
+        log_level=log_level,
+        formatter=logging.Formatter("%(asctime)s %(levelname)s %(message)s"),
+    )
+    return log_target
+
+
+def _v3_config_logger_name() -> str:
+    return "config"
 
 
 class HttpNacosBackend(NacosConfigBackend):
@@ -170,6 +266,7 @@ class LegacySdkNacosBackend(NacosConfigBackend):
         super().__init__(settings)
         self._sdk_version = sdk_version
         self.backend_type = sdk_version
+        _configure_legacy_sdk_log_file(settings)
         self._client = self._build_client()
         self._watch_started = False
 
@@ -216,6 +313,13 @@ class LegacySdkNacosBackend(NacosConfigBackend):
                     "username": self.settings.username,
                     "password": self.settings.password,
                 }
+                sdk_log_target = _sdk_log_target(self.settings)
+                sdk_log_level = _resolve_sdk_log_level(self.settings.sdk_log_level)
+                sdk_log_dir = _sdk_log_dir(sdk_log_target)
+                if sdk_log_dir is not None and not _sdk_log_uses_explicit_file(sdk_log_target):
+                    kwargs["logDir"] = str(sdk_log_dir)
+                if sdk_log_level is not None:
+                    kwargs["log_level"] = sdk_log_level
                 return client_cls(**{k: v for k, v in kwargs.items() if v is not None})
             except Exception as exc:
                 last_error = exc
@@ -347,6 +451,8 @@ class AsyncSdkV3NacosBackend(NacosConfigBackend):
         await asyncio.Event().wait()
 
     async def _create_config_service(self) -> object:
+        config_logger_name = _v3_config_logger_name()
+        explicit_log_file = _configure_v3_sdk_log_file(self.settings, config_logger_name)
         builder = self._module.ClientConfigBuilder()
         builder.server_address(self.settings.server_addr)
         if self.settings.namespace:
@@ -355,8 +461,20 @@ class AsyncSdkV3NacosBackend(NacosConfigBackend):
             builder.username(self.settings.username)
         if self.settings.password:
             builder.password(self.settings.password)
+        sdk_log_dir = _sdk_log_dir(_sdk_log_target(self.settings))
+        sdk_log_level = _resolve_sdk_log_level(self.settings.sdk_log_level)
+        if sdk_log_dir is not None:
+            builder.log_dir(str(sdk_log_dir))
+        if sdk_log_level is not None:
+            builder.log_level(sdk_log_level)
         client_config = builder.build()
-        return await self._module.NacosConfigService.create_config_service(client_config)
+        service = await self._module.NacosConfigService.create_config_service(client_config)
+        if explicit_log_file is not None:
+            _configure_v3_sdk_log_file(self.settings, config_logger_name)
+            default_log_file = explicit_log_file.parent / f"{config_logger_name}.log"
+            if default_log_file != explicit_log_file and default_log_file.exists():
+                default_log_file.unlink(missing_ok=True)
+        return service
 
     def _config_param(self) -> object:
         return self._module.ConfigParam(

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from pathlib import Path
 
 from dynamic_config.backends import (
     AsyncSdkV3NacosBackend,
@@ -155,10 +157,48 @@ def test_legacy_sdk_backend_logs_watcher_start(monkeypatch, caplog) -> None:  # 
     assert "started nacos watcher via sdk_v2 backend" in caplog.text
 
 
-def test_async_sdk_v3_backend_uses_current_nacos_sdk_shape(monkeypatch, caplog) -> None:  # type: ignore[no-untyped-def]
+def test_legacy_sdk_backend_routes_logs_to_explicit_file(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    from dynamic_config import backends as backend_module
+
+    captured: dict[str, object] = {}
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    class _FakeLegacyModule:
+        NacosClient = _FakeClient
+
+    monkeypatch.setattr(backend_module.importlib, "import_module", lambda _name: _FakeLegacyModule)
+
+    log_file = tmp_path / "logs" / "nacos.log"
+    backend = LegacySdkNacosBackend(
+        NacosSettings(
+            server_addr="127.0.0.1:8848",
+            namespace=None,
+            data_id="demo.yaml",
+            group="DEFAULT_GROUP",
+            backend=NacosBackendType.SDK_V2,
+            sdk_log_path=str(log_file),
+            sdk_log_level="ERROR",
+        ),
+        sdk_version=NacosBackendType.SDK_V2,
+    )
+
+    assert isinstance(backend, LegacySdkNacosBackend)
+    assert "logDir" not in captured
+    assert captured["log_level"] == logging.ERROR
+    handlers = logging.getLogger("nacos").handlers
+    assert any(
+        getattr(handler, "baseFilename", None) == str(log_file.resolve()) for handler in handlers
+    )
+
+
+def test_async_sdk_v3_backend_uses_current_nacos_sdk_shape(monkeypatch, caplog, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     from dynamic_config import backends as backend_module
 
     updates: list[str] = []
+    captured: dict[str, object] = {}
 
     class _FakeConfigParam:
         def __init__(self, *, data_id: str, group: str):
@@ -188,6 +228,14 @@ def test_async_sdk_v3_backend_uses_current_nacos_sdk_shape(monkeypatch, caplog) 
         def password(self, _value):
             return self
 
+        def log_dir(self, value):
+            captured["log_dir"] = value
+            return self
+
+        def log_level(self, value):
+            captured["log_level"] = value
+            return self
+
         def build(self):
             return object()
 
@@ -212,10 +260,19 @@ def test_async_sdk_v3_backend_uses_current_nacos_sdk_shape(monkeypatch, caplog) 
             username="u",
             password="p",
             backend=NacosBackendType.SDK_V3,
+            sdk_log_path=str(tmp_path / "logs" / "nacos.log"),
+            sdk_log_level="ERROR",
         )
     )
 
     assert backend.fetch_content() == "loaded:demo.yaml:DEFAULT_GROUP"
+    assert captured["log_dir"] == str((tmp_path / "logs").resolve())
+    assert captured["log_level"] == logging.ERROR
+    handlers = logging.getLogger("config").handlers
+    assert any(
+        getattr(handler, "baseFilename", None) == str((tmp_path / "logs" / "nacos.log").resolve())
+        for handler in handlers
+    )
 
     caplog.set_level("INFO")
     backend.start_watch(updates.append)

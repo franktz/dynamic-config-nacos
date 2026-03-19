@@ -21,3 +21,5 @@ class NacosSettings:
     password: str | None = None
     backend: NacosBackendType = NacosBackendType.AUTO
     polling_interval_seconds: float = 2.0
+    sdk_log_path: str | None = None
+    sdk_log_level: int | str | None = None

@@ -134,6 +134,44 @@ logging.basicConfig(level=logging.INFO)
 - `info`：自动选择了某个 backend
 - `exception`：Nacos 拉取、watcher 启动、HTTP 登录或版本探测失败
 
+### 单独输出 `nacos-python-sdk` 日志
+
+如果你使用的是 `sdk_v2` 或 `sdk_v3`，可以把 `nacos-python-sdk` 的日志单独输出到指定目录
+或指定文件，而不影响业务应用自己的根日志配置。
+
+例如，显式传入初始化参数：
+
+```python
+from dynamic_config import DynamicConfigProvider, NacosBackendType, NacosSettings
+
+provider = DynamicConfigProvider(local_yaml_path="configs/local.yaml")
+provider.load_initial(
+    NacosSettings(
+        server_addr="127.0.0.1:8848",
+        namespace=None,
+        data_id="app.yaml",
+        group="DEFAULT_GROUP",
+        backend=NacosBackendType.SDK_V3,
+        sdk_log_level="ERROR",
+        sdk_log_path="logs/nacos.log",
+    )
+)
+```
+
+也可以通过环境变量配置：
+
+```powershell
+$env:NACOS_SDK_LOG_LEVEL = "ERROR"
+$env:NACOS_SDK_LOG_PATH = "logs/nacos.log"
+```
+
+补充说明：
+
+- `NACOS_SDK_LOG_LEVEL` 默认不传时，SDK 最终使用的是 `INFO`
+- `sdk_log_path` 支持目录和明确文件路径两种形式
+- 如果传入 `logs/nacos.log`，SDK 日志会写到这个文件
+- 这项配置只对 `sdk_v2` 和 `sdk_v3` 生效；`http` backend 不会使用 `nacos-python-sdk`
+
 ## 如何读取配置
 
 ### 方式一：`get`
