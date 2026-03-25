@@ -26,6 +26,27 @@ class NacosBackendError(RuntimeError):
     pass
 
 
+def _extract_listener_content(payload: object) -> str | None:
+    if isinstance(payload, bytes):
+        return payload.decode("utf-8")
+    if isinstance(payload, str):
+        return payload
+    if isinstance(payload, dict):
+        content = _extract_listener_content(payload.get("content"))
+        if content is not None:
+            return content
+        return _extract_listener_content(payload.get("raw_content"))
+    content = getattr(payload, "content", None)
+    if content is not None and content is not payload:
+        resolved = _extract_listener_content(content)
+        if resolved is not None:
+            return resolved
+    raw_content = getattr(payload, "raw_content", None)
+    if raw_content is not None and raw_content is not payload:
+        return _extract_listener_content(raw_content)
+    return None
+
+
 class NacosConfigBackend(ABC):
     def __init__(self, settings: NacosSettings):
         self.settings = settings
@@ -341,11 +362,9 @@ class LegacySdkNacosBackend(NacosConfigBackend):
 
     def _register_listener(self, on_update: UpdateCallback) -> None:
         def _listener(*args: object, **kwargs: object) -> None:
-            content = kwargs.get("content")
+            content = _extract_listener_content(kwargs.get("content"))
             if content is None and args:
-                content = args[-1]
-            if isinstance(content, bytes):
-                content = content.decode("utf-8")
+                content = _extract_listener_content(args[-1])
             if isinstance(content, str):
                 on_update(content)
 
@@ -435,11 +454,9 @@ class AsyncSdkV3NacosBackend(NacosConfigBackend):
         service = await self._create_config_service()
 
         async def _listener(*args: object, **kwargs: object) -> None:
-            content = kwargs.get("content")
+            content = _extract_listener_content(kwargs.get("content"))
             if content is None and args:
-                content = args[-1]
-            if isinstance(content, bytes):
-                content = content.decode("utf-8")
+                content = _extract_listener_content(args[-1])
             if isinstance(content, str):
                 on_update(content)
 

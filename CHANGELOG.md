@@ -6,6 +6,22 @@ Author: FrankTang (<franktz2003@gmail.com>)
 
 License: MIT
 
+## [0.1.3] - 2026-03-25
+
+### Fixed
+
+- Fixed Nacos watcher update handling so `sdk_v2` and `sdk_v3` no longer drop
+  hot-update events when listener payloads arrive as wrapped objects carrying
+  `content` or `raw_content` instead of raw strings.
+
+### Improved
+
+- Added listener-content extraction compatibility for `str`, `bytes`,
+  `dict["content"]`, `dict["raw_content"]`, object `.content`, and object
+  `.raw_content` payload shapes.
+- Expanded backend tests to cover wrapped listener payloads for both legacy and
+  current SDK-backed watch flows.
+
 ## [0.1.2] - 2026-03-19
 
 ### Added

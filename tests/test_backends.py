@@ -157,6 +157,56 @@ def test_legacy_sdk_backend_logs_watcher_start(monkeypatch, caplog) -> None:  # 
     assert "started nacos watcher via sdk_v2 backend" in caplog.text
 
 
+def test_legacy_sdk_backend_listener_accepts_dict_content(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    updates: list[str] = []
+
+    class _FakeClient:
+        def add_listener(self, _data_id, _group, listener):
+            listener({"content": "updated-from-dict"})
+
+    monkeypatch.setattr(LegacySdkNacosBackend, "_build_client", lambda self: _FakeClient())
+
+    backend = LegacySdkNacosBackend(
+        NacosSettings(
+            server_addr="127.0.0.1:8848",
+            namespace=None,
+            data_id="demo.yaml",
+            group="DEFAULT_GROUP",
+            backend=NacosBackendType.SDK_V2,
+        ),
+        sdk_version=NacosBackendType.SDK_V2,
+    )
+
+    backend.start_watch(updates.append)
+
+    assert updates == ["updated-from-dict"]
+
+
+def test_legacy_sdk_backend_listener_falls_back_to_raw_content(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    updates: list[str] = []
+
+    class _FakeClient:
+        def add_listener(self, _data_id, _group, listener):
+            listener({"raw_content": "updated-from-raw-content"})
+
+    monkeypatch.setattr(LegacySdkNacosBackend, "_build_client", lambda self: _FakeClient())
+
+    backend = LegacySdkNacosBackend(
+        NacosSettings(
+            server_addr="127.0.0.1:8848",
+            namespace=None,
+            data_id="demo.yaml",
+            group="DEFAULT_GROUP",
+            backend=NacosBackendType.SDK_V2,
+        ),
+        sdk_version=NacosBackendType.SDK_V2,
+    )
+
+    backend.start_watch(updates.append)
+
+    assert updates == ["updated-from-raw-content"]
+
+
 def test_legacy_sdk_backend_routes_logs_to_explicit_file(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     from dynamic_config import backends as backend_module
 
@@ -284,3 +334,81 @@ def test_async_sdk_v3_backend_uses_current_nacos_sdk_shape(monkeypatch, caplog, 
 
     assert updates == ["updated"]
     assert "started nacos watcher via sdk_v3 backend" in caplog.text
+
+
+def test_async_sdk_v3_backend_listener_accepts_object_content(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from dynamic_config import backends as backend_module
+
+    updates: list[str] = []
+
+    class _Payload:
+        def __init__(self, content: str):
+            self.content = content
+
+    class _FakeConfigParam:
+        def __init__(self, *, data_id: str, group: str):
+            self.data_id = data_id
+            self.group = group
+
+    class _FakeService:
+        async def get_config(self, param):
+            return f"loaded:{param.data_id}:{param.group}"
+
+        async def add_listener(self, _data_id, _group, listener):
+            await listener(_Payload("updated-from-object"))
+
+        async def shutdown(self):
+            return None
+
+    class _FakeBuilder:
+        def server_address(self, _value):
+            return self
+
+        def namespace_id(self, _value):
+            return self
+
+        def username(self, _value):
+            return self
+
+        def password(self, _value):
+            return self
+
+        def log_dir(self, _value):
+            return self
+
+        def log_level(self, _value):
+            return self
+
+        def build(self):
+            return object()
+
+    class _FakeNacosConfigService:
+        @staticmethod
+        async def create_config_service(_client_config):
+            return _FakeService()
+
+    class _FakeModule:
+        ClientConfigBuilder = _FakeBuilder
+        NacosConfigService = _FakeNacosConfigService
+        ConfigParam = _FakeConfigParam
+
+    monkeypatch.setattr(backend_module.importlib, "import_module", lambda _name: _FakeModule)
+
+    backend = AsyncSdkV3NacosBackend(
+        NacosSettings(
+            server_addr="127.0.0.1:8848",
+            namespace=None,
+            data_id="demo.yaml",
+            group="DEFAULT_GROUP",
+            backend=NacosBackendType.SDK_V3,
+        )
+    )
+
+    backend.start_watch(updates.append)
+
+    for _ in range(20):
+        if updates:
+            break
+        asyncio.run(asyncio.sleep(0.01))
+
+    assert updates == ["updated-from-object"]

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dynamic-config-nacos"
-version = "0.1.2"
+version = "0.1.3"
 description = "Reusable dynamic config provider with YAML fallback and Nacos backends"
 readme = "README.md"
 requires-python = ">=3.12"
